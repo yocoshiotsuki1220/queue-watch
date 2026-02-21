@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Crowd = "空" | "普通" | "混";
 
@@ -18,7 +18,6 @@ type PlaceCard = {
 };
 
 const STORAGE_KEY = "queuewatch.cards.v1";
-
 const EXPIRE_MS = 3 * 60 * 60 * 1000;
 
 function normalize(text: string) {
@@ -35,20 +34,6 @@ export default function QueuePage() {
   const [note, setNote] = useState("");
   const [crowd, setCrowd] = useState<Crowd>("普通");
 
-  function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      setCards(parsed);
-    } catch {}
-  }
-
-  function save(next: PlaceCard[]) {
-    setCards(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  }
-
   function prune(list: PlaceCard[]) {
     const now = Date.now();
     return list
@@ -60,7 +45,13 @@ export default function QueuePage() {
   }
 
   useEffect(() => {
-    load();
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PlaceCard[];
+      setCards(prune(parsed));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -70,8 +61,7 @@ export default function QueuePage() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
       });
-    }, 60000);
-
+    }, 60_000);
     return () => clearInterval(id);
   }, []);
 
@@ -79,13 +69,7 @@ export default function QueuePage() {
     if (!place.trim()) return;
 
     const key = normalize(place);
-
-    const newPost: Post = {
-      id: uuid(),
-      note,
-      crowd,
-      createdAt: Date.now(),
-    };
+    const newPost: Post = { id: uuid(), note, crowd, createdAt: Date.now() };
 
     setCards((prev) => {
       const next = [...prev];
@@ -94,11 +78,7 @@ export default function QueuePage() {
       if (existing) {
         existing.posts.unshift(newPost);
       } else {
-        next.unshift({
-          placeKey: key,
-          placeText: place,
-          posts: [newPost],
-        });
+        next.unshift({ placeKey: key, placeText: place, posts: [newPost] });
       }
 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -111,17 +91,10 @@ export default function QueuePage() {
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="mx-auto max-w-md px-4 py-6">
-
-        <h1 className="mb-1 text-lg font-semibold text-teal-600">
-          行列ウォッチ
-        </h1>
-
-        <p className="mb-4 text-sm text-zinc-500">
-          投稿は3時間で消えます
-        </p>
+        <h1 className="mb-1 text-lg font-semibold text-teal-600">行列ウォッチ</h1>
+        <p className="mb-4 text-sm text-zinc-500">投稿は3時間で消えます</p>
 
         <div className="mb-4 space-y-2">
-
           <input
             className="w-full rounded border px-3 py-2"
             placeholder="場所"
@@ -150,31 +123,23 @@ export default function QueuePage() {
             ))}
           </div>
 
-          <button
-            onClick={submit}
-            className="w-full rounded bg-teal-600 py-2 text-white"
-          >
+          <button onClick={submit} className="w-full rounded bg-teal-600 py-2 text-white">
             投稿
           </button>
-
         </div>
 
         <div className="space-y-4">
           {cards.map((card) => (
             <div key={card.placeKey} className="rounded border bg-white p-3">
-
               <div className="font-medium">{card.placeText}</div>
-
               {card.posts.map((p) => (
                 <div key={p.id} className="text-sm text-zinc-600">
                   {p.crowd} {p.note}
                 </div>
               ))}
-
             </div>
           ))}
         </div>
-
       </div>
     </main>
   );
