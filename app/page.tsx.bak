@@ -1,0 +1,54 @@
+﻿"use client";
+
+import { useState } from "react";
+
+type Crowd = "空" | "普通" | "混";
+
+export default function Page() {
+  const [crowd, setCrowd] = useState<Crowd>("普通");
+
+  return (
+    <main className="min-h-screen bg-zinc-50 text-zinc-900">
+      <div className="mx-auto max-w-md px-4 py-6">
+        <h1 className="mb-2 text-lg font-semibold text-teal-600">行列ウォッチ</h1>
+        <p className="mb-6 text-sm text-zinc-500">投稿は3時間で消えます</p>
+
+        <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-2">
+          <div className="flex gap-2">
+            {(["空", "普通", "混"] as Crowd[]).map((c) => {
+              const active = crowd === c;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCrowd(c)}
+                  className={[
+                    "h-10 flex-1 rounded-lg text-sm font-medium transition",
+                    active ? "bg-teal-100 text-teal-800" : "bg-white text-zinc-600 hover:bg-zinc-50",
+                  ].join(" ")}
+                  aria-pressed={active}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-xs text-zinc-500">
+            いまの混雑：<span className="font-medium text-zinc-700">{crowd}</span>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-400">
+          いまのところ、行列の投稿はありません。
+        </div>
+
+        <button
+          className="mt-4 w-full rounded-xl bg-teal-400 px-4 py-3 text-sm font-medium text-white hover:bg-teal-500 active:scale-[0.99]"
+          type="button"
+        >
+          投稿
+        </button>
+      </div>
+    </main>
+  );
+}
