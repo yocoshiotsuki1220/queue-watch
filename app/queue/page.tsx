@@ -3,14 +3,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 /**
- * 行列ウォッチ（/queue 本体）- “戻したUI”寄せ + 検索窓追加版
+ * 行列ウォッチ（/queue 本体）
  * - localStorageのみ
- * - 投稿は3時間で消える（起動時 prune + タイマー prune）
+ * - 通常投稿は3時間で消える（起動時 prune + タイマー prune）
  * - placeKeyで同一統合（ゆる正規化）
  * - カード一覧 / 最新順
  * - 投稿ごとに 👍カウント
  * - 各カードに「入力」フォーム（場所固定）
- * - 検索（場所名 + 投稿テキスト + ラベル文字列）
+ * - 検索（場所名 + 投稿テキスト）
+ * - 「自分メモ」だけは永久保存（別キーに蓄積）
  */
 
 type Crowd = "1" | "2" | "3";
@@ -29,7 +30,16 @@ type PlaceCard = {
   posts: Post[]; // 新しい順
 };
 
+type MyMemo = {
+  id: string;
+  placeText: string;
+  note: string;
+  crowd: Crowd;
+  createdAt: number;
+};
+
 const STORAGE_KEY = "queuewatch.cards.v2";
+const STORAGE_KEY_ME = "queuewatch.me.v1";
 const TTL_MS = 3 * 60 * 60 * 1000;
 
 function now() {
@@ -83,7 +93,6 @@ function prune(cards: PlaceCard[]): PlaceCard[] {
       });
     }
   }
-  // 最新投稿が新しいカードを先頭へ
   out.sort(
     (a, b) =>
       (b.posts?.[0]?.createdAt || 0) - (a.posts?.[0]?.createdAt || 0)
@@ -101,6 +110,20 @@ function loadCards(): PlaceCard[] {
 
 function saveCards(cards: PlaceCard[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+}
+
+// 自分メモだけ永久保存（上限500件。不要なら増やしてOK）
+function saveMyMemo(placeText: string, note: string, crowd: Crowd) {
+  const raw = safeJsonParse<MyMemo[]>(localStorage.getItem(STORAGE_KEY_ME), []);
+  raw.unshift({
+    id: uid(),
+    placeText,
+    note,
+    crowd,
+    createdAt: now(),
+  });
+  const trimmed = raw.slice(0, 500);
+  localStorage.setItem(STORAGE_KEY_ME, JSON.stringify(trimmed));
 }
 
 function minutesAgo(ts: number) {
@@ -161,9 +184,9 @@ function smallInputStyle(): React.CSSProperties {
 
 function CrowdPicker(props: { crowd: Crowd; setCrowd: (c: Crowd) => void }) {
   const items: { id: Crowd; label: string }[] = [
-  { id: "1", label: "👥" },
-  { id: "2", label: "👥👥" },
-  { id: "3", label: "👥👥👥" },
+    { id: "1", label: "👥" },
+    { id: "2", label: "👥👥" },
+    { id: "3", label: "👥👥👥" },
   ];
 
   return (
@@ -279,7 +302,14 @@ function CardInlineForm(props: {
                 ? `${preset}：${text}`
                 : preset;
 
+            // 表（3時間TTL）
             props.onPost(finalNote, crowd);
+
+            // 裏（永久保存）は「自分メモ」だけ
+            if (preset === "自分メモ") {
+              saveMyMemo(props.placeText, finalNote, crowd);
+            }
+
             setNote("");
           }}
           style={{
@@ -430,12 +460,6 @@ export default function QueuePage() {
       saveCards(next);
       return next;
     });
-  }
-
-  function clearAll() {
-    if (!confirm("ローカルの投稿を全削除します。よろしいですか？")) return;
-    localStorage.removeItem(STORAGE_KEY);
-    setCards([]);
   }
 
   return (
@@ -731,8 +755,8 @@ export default function QueuePage() {
               ))
             )}
           </div>
-        </div></div>
+        </div>
+      </div>
     </main>
   );
 }
-
