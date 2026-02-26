@@ -161,9 +161,9 @@ function smallInputStyle(): React.CSSProperties {
 
 function CrowdPicker(props: { crowd: Crowd; setCrowd: (c: Crowd) => void }) {
   const items: { id: Crowd; label: string }[] = [
-    { id: "1", label: "●" },
-    { id: "2", label: "●●" },
-    { id: "3", label: "●●●" },
+  { id: "1", label: "👥" },
+  { id: "2", label: "👥👥" },
+  { id: "3", label: "👥👥👥" },
   ];
 
   return (
