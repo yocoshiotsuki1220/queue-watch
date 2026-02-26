@@ -731,27 +731,8 @@ export default function QueuePage() {
               ))
             )}
           </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-          <button
-            type="button"
-            onClick={clearAll}
-            style={{
-              height: 40,
-              padding: "0 14px",
-              borderRadius: 12,
-              border: `1px solid ${COLORS.border}`,
-              background: "white",
-              color: COLORS.sub,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            全消去
-          </button>
-        </div>
-      </div>
+        </div></div>
     </main>
   );
 }
+
