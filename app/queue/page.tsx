@@ -3,15 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 /**
- * 行列ウォッチ（/queue 本体）
+ * 行列ウォッチ（/queue）
  * - localStorageのみ
- * - 通常投稿は3時間で消える（起動時 prune + タイマー prune）
- * - placeKeyで同一統合（ゆる正規化）
- * - カード一覧 / 最新順
- * - 投稿ごとに 👍カウント
- * - 各カードに「入力」フォーム（場所固定）
- * - 検索（場所名 + 投稿テキスト）
- * - 「自分メモ」だけは永久保存（別キーに蓄積）
+ * - 最新タブ：投稿は3時間で消える（TTL）
+ * - 自分タブ：自分が関わった「場所カード」を永久に残す（自分メモは永久）
+ * - 検索（場所 / ひとこと）
+ * - 👥で混雑
  */
 
 type Crowd = "1" | "2" | "3";
@@ -32,14 +29,15 @@ type PlaceCard = {
 
 type MyMemo = {
   id: string;
+  placeKey: string;
   placeText: string;
   note: string;
   crowd: Crowd;
   createdAt: number;
 };
 
-const STORAGE_KEY = "queuewatch.cards.v2";
-const STORAGE_KEY_ME = "queuewatch.me.v1";
+const STORAGE_KEY = "queuewatch.cards.v2"; // TTL側
+const STORAGE_KEY_ME = "queuewatch.me.v1"; // 永久側
 const TTL_MS = 3 * 60 * 60 * 1000;
 
 function now() {
@@ -81,6 +79,8 @@ function safeJsonParse<T>(s: string | null, fallback: T): T {
   }
 }
 
+/** ---------- TTL側 ---------- */
+
 function prune(cards: PlaceCard[]): PlaceCard[] {
   const cutoff = now() - TTL_MS;
   const out: PlaceCard[] = [];
@@ -112,16 +112,28 @@ function saveCards(cards: PlaceCard[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
 }
 
-// 自分メモだけ永久保存（上限500件。不要なら増やしてOK）
+/** ---------- 永久側（自分メモ） ---------- */
+
+function loadMyMemos(): MyMemo[] {
+  return safeJsonParse<MyMemo[]>(localStorage.getItem(STORAGE_KEY_ME), []);
+}
+
+// 自分メモだけ永久保存（上限500件。増やしたければここだけ変える）
 function saveMyMemo(placeText: string, note: string, crowd: Crowd) {
+  const text = (placeText ?? "").trim();
+  if (!text) return;
+
+  const placeKey = toPlaceKey(text);
   const raw = safeJsonParse<MyMemo[]>(localStorage.getItem(STORAGE_KEY_ME), []);
   raw.unshift({
     id: uid(),
-    placeText,
-    note,
+    placeKey,
+    placeText: text,
+    note: (note ?? "").trim(),
     crowd,
     createdAt: now(),
   });
+
   const trimmed = raw.slice(0, 500);
   localStorage.setItem(STORAGE_KEY_ME, JSON.stringify(trimmed));
 }
@@ -149,8 +161,8 @@ const COLORS = {
   border: "#e6e6e6",
   text: "#111111",
   sub: "#6b7280",
-  btn: "#0A0A0C", // 黒
-  btn2: "#6b7280", // グレー（上の入力）
+  btn: "#0A0A0C",
+  btn2: "#6b7280",
   chipActive: "#111111",
 };
 
@@ -179,6 +191,22 @@ function smallInputStyle(): React.CSSProperties {
     background: "white",
     width: "100%",
     boxSizing: "border-box",
+  };
+}
+
+function pillStyle(active: boolean): React.CSSProperties {
+  return {
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: `1px solid ${COLORS.border}`,
+    background: active ? COLORS.chipActive : "white",
+    color: active ? "white" : COLORS.text,
+    fontWeight: 900,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
   };
 }
 
@@ -219,9 +247,11 @@ function CrowdPicker(props: { crowd: Crowd; setCrowd: (c: Crowd) => void }) {
   );
 }
 
+/** カード下の入力（場所固定） */
 function CardInlineForm(props: {
   placeText: string;
-  onPost: (note: string, crowd: Crowd) => void;
+  onPostTTL: (note: string, crowd: Crowd) => void;
+  onSaveMe: (note: string, crowd: Crowd) => void;
 }) {
   const [note, setNote] = useState("");
   const [crowd, setCrowd] = useState<Crowd>("2");
@@ -302,12 +332,12 @@ function CardInlineForm(props: {
                 ? `${preset}：${text}`
                 : preset;
 
-            // 表（3時間TTL）
-            props.onPost(finalNote, crowd);
+            // 表（最新）には必ず出す（3時間で消える）
+            props.onPostTTL(finalNote, crowd);
 
-            // 裏（永久保存）は「自分メモ」だけ
+            // 裏（自分）は「自分メモ」だけ永久保存
             if (preset === "自分メモ") {
-              saveMyMemo(props.placeText, finalNote, crowd);
+              props.onSaveMe(finalNote, crowd);
             }
 
             setNote("");
@@ -330,7 +360,8 @@ function CardInlineForm(props: {
   );
 }
 
-function matchesQuery(card: PlaceCard, qNorm: string) {
+/** 検索：場所 + 投稿テキスト */
+function matchesQueryTTL(card: PlaceCard, qNorm: string) {
   if (!qNorm) return true;
 
   const place = normalizeBase(card.placeText || "");
@@ -343,8 +374,20 @@ function matchesQuery(card: PlaceCard, qNorm: string) {
   return false;
 }
 
+/** 検索：自分タブ（場所 + 自分メモのテキスト） */
+function matchesQueryMe(placeText: string, memos: MyMemo[], qNorm: string) {
+  if (!qNorm) return true;
+  if (normalizeBase(placeText).includes(qNorm)) return true;
+  for (const m of memos) {
+    if (normalizeBase(m.note || "").includes(qNorm)) return true;
+  }
+  return false;
+}
+
 export default function QueuePage() {
-  // 上部フォーム
+  const [tab, setTab] = useState<"latest" | "me">("latest");
+
+  // 上部フォーム（最新タブ用）
   const [placeText, setPlaceText] = useState("");
   const [note, setNote] = useState("");
   const [crowd, setCrowd] = useState<Crowd>("2");
@@ -352,24 +395,25 @@ export default function QueuePage() {
   // 検索
   const [query, setQuery] = useState("");
 
-  // カード一覧
+  // TTLカード
   const [cards, setCards] = useState<PlaceCard[]>([]);
 
+  // 自分メモ
+  const [myMemos, setMyMemos] = useState<MyMemo[]>([]);
+
   useEffect(() => {
-    const loaded = loadCards();
-    setCards(loaded);
+    setCards(loadCards());
+    setMyMemos(loadMyMemos());
 
     const t = setInterval(() => {
       setCards((prev) => {
         const pruned = prune(prev);
 
-        // サイズ比較
         if (pruned.length !== prev.length) {
           saveCards(pruned);
           return pruned;
         }
 
-        // 先頭投稿時刻比較（重い stringify を避ける）
         const a0 = pruned[0]?.posts?.[0]?.createdAt || 0;
         const b0 = prev[0]?.posts?.[0]?.createdAt || 0;
         if (a0 !== b0) {
@@ -393,14 +437,10 @@ export default function QueuePage() {
 
   const filteredCards = useMemo(() => {
     const qNorm = normalizeBase(query);
-    return sortedCards.filter((c) => matchesQuery(c, qNorm));
+    return sortedCards.filter((c) => matchesQueryTTL(c, qNorm));
   }, [sortedCards, query]);
 
-  function addPost(
-    targetPlaceText: string,
-    targetNote: string,
-    targetCrowd: Crowd
-  ) {
+  function addPostTTL(targetPlaceText: string, targetNote: string, targetCrowd: Crowd) {
     const text = (targetPlaceText ?? "").trim();
     if (!text) return;
 
@@ -462,79 +502,126 @@ export default function QueuePage() {
     });
   }
 
+  function addMyMemo(placeText: string, note: string, crowd: Crowd) {
+    saveMyMemo(placeText, note, crowd);
+    setMyMemos(loadMyMemos());
+  }
+
+  /** 自分タブ用：場所ごとにまとめる（場所カードを“永遠”に残す） */
+  const meGrouped = useMemo(() => {
+    const map = new Map<string, { placeText: string; memos: MyMemo[]; latestAt: number }>();
+
+    for (const m of myMemos) {
+      const k = m.placeKey || toPlaceKey(m.placeText || "");
+      const prev = map.get(k);
+      if (!prev) {
+        map.set(k, {
+          placeText: m.placeText || "",
+          memos: [m],
+          latestAt: m.createdAt || 0,
+        });
+      } else {
+        prev.memos.push(m);
+        if ((m.createdAt || 0) > (prev.latestAt || 0)) prev.latestAt = m.createdAt || 0;
+        // placeTextは最新の表記を優先
+        if (m.placeText) prev.placeText = m.placeText;
+      }
+    }
+
+    const arr = Array.from(map.entries()).map(([placeKey, v]) => ({
+      placeKey,
+      placeText: v.placeText,
+      memos: v.memos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+      latestAt: v.latestAt,
+    }));
+
+    arr.sort((a, b) => (b.latestAt || 0) - (a.latestAt || 0));
+    return arr;
+  }, [myMemos]);
+
+  const meFiltered = useMemo(() => {
+    const qNorm = normalizeBase(query);
+    return meGrouped.filter((x) => matchesQueryMe(x.placeText, x.memos, qNorm));
+  }, [meGrouped, query]);
+
   return (
-    <main
-      style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text }}
-    >
+    <main style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 18 }}>
         {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            justifyContent: "space-between",
-            gap: 12,
-            marginBottom: 10,
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
           <div style={{ fontWeight: 900, fontSize: 22 }}>行列ウォッチ</div>
         </div>
-        <div style={{ fontSize: 12, color: COLORS.sub, marginBottom: 12 }}>
-          投稿は3時間で消えます
-        </div>
 
-        {/* Top Form */}
-        <div
-          style={{
-            background: COLORS.card,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: 16,
-            padding: 14,
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <input
-              value={placeText}
-              onChange={(e) => setPlaceText(e.target.value)}
-              placeholder="場所（例：渋谷 / shibuya / 東北沢 千里眼）"
-              style={inputStyle()}
-            />
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+          <button type="button" onClick={() => setTab("latest")} style={pillStyle(tab === "latest")}>
+            最新
+          </button>
+          <button type="button" onClick={() => setTab("me")} style={pillStyle(tab === "me")}>
+            自分
+          </button>
 
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="ひとこと（任意）"
-              style={inputStyle()}
-            />
+          <div style={{ flex: 1 }} />
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <CrowdPicker crowd={crowd} setCrowd={setCrowd} />
-
-              <div style={{ flex: 1 }} />
-
-              <button
-                type="button"
-                onClick={() => {
-                  addPost(placeText, note, crowd);
-                  setNote("");
-                }}
-                style={{
-                  height: 42,
-                  padding: "0 22px",
-                  borderRadius: 12,
-                  border: "none",
-                  background: COLORS.btn2,
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                入力
-              </button>
-            </div>
+          <div style={{ fontSize: 12, color: COLORS.sub }}>
+            {tab === "latest" ? "投稿は3時間で消えます" : "自分が関わった場所カードは残ります"}
           </div>
         </div>
+
+        {/* Top Form（最新タブのみ） */}
+        {tab === "latest" ? (
+          <div
+            style={{
+              background: COLORS.card,
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 16,
+              padding: 14,
+              marginBottom: 16,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                value={placeText}
+                onChange={(e) => setPlaceText(e.target.value)}
+                placeholder="場所（例：渋谷 / shibuya / 東北沢 千里眼）"
+                style={inputStyle()}
+              />
+
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="ひとこと（任意）"
+                style={inputStyle()}
+              />
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CrowdPicker crowd={crowd} setCrowd={setCrowd} />
+
+                <div style={{ flex: 1 }} />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    addPostTTL(placeText, note, crowd);
+                    setNote("");
+                  }}
+                  style={{
+                    height: 42,
+                    padding: "0 22px",
+                    borderRadius: 12,
+                    border: "none",
+                    background: COLORS.btn2,
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  入力
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Cards */}
         <div
@@ -554,16 +641,9 @@ export default function QueuePage() {
               gap: 10,
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>カード一覧</div>
-              <div style={{ fontSize: 12, color: COLORS.sub }}>最新順</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontWeight: 900 }}>{tab === "latest" ? "カード一覧" : "自分のカード"}</div>
+              <div style={{ fontSize: 12, color: COLORS.sub }}>{tab === "latest" ? "最新順" : "最新順"}</div>
             </div>
 
             {/* Search */}
@@ -596,131 +676,134 @@ export default function QueuePage() {
             </div>
           </div>
 
-          <div
-            style={{
-              padding: 14,
-              display: "flex",
-              flexDirection: "column",
-              gap: 12,
-            }}
-          >
-            {filteredCards.length === 0 ? (
-              <div
-                style={{
-                  color: COLORS.sub,
-                  fontSize: 13,
-                  padding: 12,
-                  border: `1px solid ${COLORS.border}`,
-                  borderRadius: 14,
-                }}
-              >
-                {query.trim()
-                  ? "検索に一致する投稿がありません。"
-                  : "いまのところ、行列の投稿はありません。"}
-              </div>
-            ) : (
-              filteredCards.map((c) => (
-                <div
-                  key={c.placeKey}
-                  style={{
-                    border: `1px solid ${COLORS.border}`,
-                    borderRadius: 16,
-                    overflow: "hidden",
-                  }}
-                >
-                  {/* Card header */}
-                  <div
-                    style={{
-                      padding: "12px 14px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <div style={{ fontWeight: 900 }}>{c.placeText}</div>
-                    <div style={{ color: COLORS.sub, fontSize: 12 }}>
-                      ({c.posts?.length || 0})
+          <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+            {tab === "latest" ? (
+              filteredCards.length === 0 ? (
+                <div style={{ color: COLORS.sub, fontSize: 13, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 14 }}>
+                  {query.trim() ? "検索に一致する投稿がありません。" : "いまのところ、行列の投稿はありません。"}
+                </div>
+              ) : (
+                filteredCards.map((c) => (
+                  <div key={c.placeKey} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontWeight: 900 }}>{c.placeText}</div>
+                      <div style={{ color: COLORS.sub, fontSize: 12 }}>({c.posts?.length || 0})</div>
                     </div>
-                  </div>
 
-                  <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
+                    <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
 
-                  {/* Posts */}
-                  <div
-                    style={{
-                      padding: 12,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                    }}
-                  >
-                    {(c.posts || []).slice(0, 8).map((p) => (
-                      <div
-                        key={p.id}
-                        style={{
-                          border: `1px solid ${COLORS.border}`,
-                          borderRadius: 14,
-                          padding: 12,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 10,
-                        }}
-                      >
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontWeight: 800,
-                              fontSize: 14,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                            title={p.note || ""}
-                          >
-                            {p.note ? p.note : "（ひとことなし）"}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 12,
-                              color: COLORS.sub,
-                              marginTop: 2,
-                            }}
-                          >
-                            {minutesAgo(p.createdAt)}
-                          </div>
-                        </div>
-
+                    <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                      {(c.posts || []).slice(0, 8).map((p) => (
                         <div
+                          key={p.id}
                           style={{
+                            border: `1px solid ${COLORS.border}`,
+                            borderRadius: 14,
+                            padding: 12,
                             display: "flex",
                             alignItems: "center",
-                            gap: 8,
-                            flexShrink: 0,
+                            justifyContent: "space-between",
+                            gap: 10,
                           }}
                         >
-                          <button
-                            type="button"
-                            onClick={() => like(c.placeKey, p.id)}
-                            style={{
-                              height: 30,
-                              padding: "0 10px",
-                              borderRadius: 10,
-                              border: `1px solid ${COLORS.border}`,
-                              background: "white",
-                              cursor: "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              fontWeight: 800,
-                            }}
-                            title="いいね"
-                          >
-                            <span>👍</span>
-                            <span style={{ minWidth: 10, textAlign: "right" }}>
-                              {p.likes || 0}
-                            </span>
-                          </button>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.note || ""}>
+                              {p.note ? p.note : "（ひとことなし）"}
+                            </div>
+                            <div style={{ fontSize: 12, color: COLORS.sub, marginTop: 2 }}>{minutesAgo(p.createdAt)}</div>
+                          </div>
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => like(c.placeKey, p.id)}
+                              style={{
+                                height: 30,
+                                padding: "0 10px",
+                                borderRadius: 10,
+                                border: `1px solid ${COLORS.border}`,
+                                background: "white",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                fontWeight: 800,
+                              }}
+                              title="いいね"
+                            >
+                              <span>👍</span>
+                              <span style={{ minWidth: 10, textAlign: "right" }}>{p.likes || 0}</span>
+                            </button>
+
+                            <div
+                              style={{
+                                height: 30,
+                                minWidth: 58,
+                                padding: "0 10px",
+                                borderRadius: 10,
+                                border: `1px solid ${COLORS.border}`,
+                                background: "white",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 900,
+                                letterSpacing: 1,
+                              }}
+                              title="混雑"
+                            >
+                              {crowdIcons(p.crowd)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
+                    <CardInlineForm
+                      placeText={c.placeText}
+                      onPostTTL={(n, cr) => addPostTTL(c.placeText, n, cr)}
+                      onSaveMe={(n, cr) => addMyMemo(c.placeText, n, cr)}
+                    />
+                  </div>
+                ))
+              )
+            ) : (
+              // 自分タブ
+              meFiltered.length === 0 ? (
+                <div style={{ color: COLORS.sub, fontSize: 13, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 14 }}>
+                  {query.trim() ? "検索に一致するメモがありません。" : "自分メモはまだありません。"}
+                </div>
+              ) : (
+                meFiltered.map((x) => (
+                  <div key={x.placeKey} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontWeight: 900 }}>{x.placeText}</div>
+                      <div style={{ color: COLORS.sub, fontSize: 12 }}>({x.memos.length})</div>
+                    </div>
+
+                    <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
+
+                    {/* 自分メモ（永久） */}
+                    <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                      {x.memos.slice(0, 20).map((m) => (
+                        <div
+                          key={m.id}
+                          style={{
+                            border: `1px solid ${COLORS.border}`,
+                            borderRadius: 14,
+                            padding: 12,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.note || ""}>
+                              {m.note ? m.note : "（ひとことなし）"}
+                            </div>
+                            <div style={{ fontSize: 12, color: COLORS.sub, marginTop: 2 }}>{minutesAgo(m.createdAt)}</div>
+                          </div>
 
                           <div
                             style={{
@@ -735,24 +818,26 @@ export default function QueuePage() {
                               justifyContent: "center",
                               fontWeight: 900,
                               letterSpacing: 1,
+                              flexShrink: 0,
                             }}
                             title="混雑"
                           >
-                            {crowdIcons(p.crowd)}
+                            {crowdIcons(m.crowd)}
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
 
-                  {/* Inline input */}
-                  <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
-                  <CardInlineForm
-                    placeText={c.placeText}
-                    onPost={(n, cr) => addPost(c.placeText, n, cr)}
-                  />
-                </div>
-              ))
+                    {/* 自分タブでも同じ場所に追記できる（自分メモを永久保存） */}
+                    <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
+                    <CardInlineForm
+                      placeText={x.placeText}
+                      onPostTTL={(n, cr) => addPostTTL(x.placeText, n, cr)}
+                      onSaveMe={(n, cr) => addMyMemo(x.placeText, n, cr)}
+                    />
+                  </div>
+                ))
+              )
             )}
           </div>
         </div>
