@@ -115,9 +115,9 @@ function minutesAgo(ts: number) {
 }
 
 function crowdIcons(c: Crowd) {
-  if (c === "1") return "👤";
-  if (c === "2") return "👤👤";
-  return "👤👤👤";
+  if (c === "1") return "👥";
+  if (c === "2") return "👥👥";
+  return "👥👥👥";
 }
 
 const COLORS = {
@@ -755,4 +755,4 @@ export default function QueuePage() {
     </main>
   );
 }
-
+'@ | Set-Content .\app\queue\page.tsx -Encoding utf8
