@@ -3,13 +3,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 /**
- * 行列ウォッチ（/queue 本体）- “戻したいUI”寄せ版
+ * 行列ウォッチ（/queue 本体）- “戻したUI”寄せ + 検索窓追加版
  * - localStorageのみ
  * - 投稿は3時間で消える（起動時 prune + タイマー prune）
  * - placeKeyで同一統合（ゆる正規化）
  * - カード一覧 / 最新順
  * - 投稿ごとに 👍カウント
  * - 各カードに「入力」フォーム（場所固定）
+ * - 検索（場所名 + 投稿テキスト + ラベル文字列）
  */
 
 type Crowd = "1" | "2" | "3";
@@ -114,7 +115,7 @@ function minutesAgo(ts: number) {
 }
 
 function crowdIcons(c: Crowd) {
-  // 見た目を揃えるために “●” 表現（スクショ寄せ）
+  // 見た目を揃えるために “●” 表現
   if (c === "1") return "●";
   if (c === "2") return "●●";
   return "●●●";
@@ -139,6 +140,20 @@ function inputStyle(): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     outline: "none",
     fontSize: 14,
+    background: "white",
+    width: "100%",
+    boxSizing: "border-box",
+  };
+}
+
+function smallInputStyle(): React.CSSProperties {
+  return {
+    height: 38,
+    padding: "0 12px",
+    borderRadius: 12,
+    border: `1px solid ${COLORS.border}`,
+    outline: "none",
+    fontSize: 13,
     background: "white",
     width: "100%",
     boxSizing: "border-box",
@@ -242,7 +257,14 @@ function CardInlineForm(props: {
         style={inputStyle()}
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginTop: 10,
+        }}
+      >
         <CrowdPicker crowd={crowd} setCrowd={setCrowd} />
 
         <div style={{ flex: 1 }} />
@@ -279,11 +301,27 @@ function CardInlineForm(props: {
   );
 }
 
+function matchesQuery(card: PlaceCard, qNorm: string) {
+  if (!qNorm) return true;
+
+  const place = normalizeBase(card.placeText || "");
+  if (place.includes(qNorm)) return true;
+
+  for (const p of card.posts || []) {
+    const note = normalizeBase(p.note || "");
+    if (note.includes(qNorm)) return true;
+  }
+  return false;
+}
+
 export default function QueuePage() {
   // 上部フォーム
   const [placeText, setPlaceText] = useState("");
   const [note, setNote] = useState("");
   const [crowd, setCrowd] = useState<Crowd>("2");
+
+  // 検索
+  const [query, setQuery] = useState("");
 
   // カード一覧
   const [cards, setCards] = useState<PlaceCard[]>([]);
@@ -324,7 +362,16 @@ export default function QueuePage() {
     );
   }, [cards]);
 
-  function addPost(targetPlaceText: string, targetNote: string, targetCrowd: Crowd) {
+  const filteredCards = useMemo(() => {
+    const qNorm = normalizeBase(query);
+    return sortedCards.filter((c) => matchesQuery(c, qNorm));
+  }, [sortedCards, query]);
+
+  function addPost(
+    targetPlaceText: string,
+    targetNote: string,
+    targetCrowd: Crowd
+  ) {
     const text = (targetPlaceText ?? "").trim();
     if (!text) return;
 
@@ -393,7 +440,9 @@ export default function QueuePage() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text }}>
+    <main
+      style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text }}
+    >
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 18 }}>
         {/* Header */}
         <div
@@ -478,17 +527,61 @@ export default function QueuePage() {
               padding: "14px 16px",
               borderBottom: `1px solid ${COLORS.border}`,
               display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              flexDirection: "column",
               gap: 10,
             }}
           >
-            <div style={{ fontWeight: 900 }}>カード一覧</div>
-            <div style={{ fontSize: 12, color: COLORS.sub }}>最新順</div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontWeight: 900 }}>カード一覧</div>
+              <div style={{ fontSize: 12, color: COLORS.sub }}>最新順</div>
+            </div>
+
+            {/* Search */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="検索（場所 / ひとこと）"
+                style={smallInputStyle()}
+              />
+              {query.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  style={{
+                    height: 38,
+                    padding: "0 12px",
+                    borderRadius: 12,
+                    border: `1px solid ${COLORS.border}`,
+                    background: "white",
+                    color: COLORS.sub,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  クリア
+                </button>
+              ) : null}
+            </div>
           </div>
 
-          <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-            {sortedCards.length === 0 ? (
+          <div
+            style={{
+              padding: 14,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            {filteredCards.length === 0 ? (
               <div
                 style={{
                   color: COLORS.sub,
@@ -498,10 +591,12 @@ export default function QueuePage() {
                   borderRadius: 14,
                 }}
               >
-                いまのところ、行列の投稿はありません。
+                {query.trim()
+                  ? "検索に一致する投稿がありません。"
+                  : "いまのところ、行列の投稿はありません。"}
               </div>
             ) : (
-              sortedCards.map((c) => (
+              filteredCards.map((c) => (
                 <div
                   key={c.placeKey}
                   style={{
@@ -528,7 +623,14 @@ export default function QueuePage() {
                   <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
 
                   {/* Posts */}
-                  <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div
+                    style={{
+                      padding: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
                     {(c.posts || []).slice(0, 8).map((p) => (
                       <div
                         key={p.id}
@@ -555,12 +657,25 @@ export default function QueuePage() {
                           >
                             {p.note ? p.note : "（ひとことなし）"}
                           </div>
-                          <div style={{ fontSize: 12, color: COLORS.sub, marginTop: 2 }}>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: COLORS.sub,
+                              marginTop: 2,
+                            }}
+                          >
                             {minutesAgo(p.createdAt)}
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            flexShrink: 0,
+                          }}
+                        >
                           <button
                             type="button"
                             onClick={() => like(c.placeKey, p.id)}
