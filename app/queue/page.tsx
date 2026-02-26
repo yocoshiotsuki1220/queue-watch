@@ -115,10 +115,9 @@ function minutesAgo(ts: number) {
 }
 
 function crowdIcons(c: Crowd) {
-  // 見た目を揃えるために “●” 表現
-  if (c === "1") return "●";
-  if (c === "2") return "●●";
-  return "●●●";
+  if (c === "1") return "👤";
+  if (c === "2") return "👤👤";
+  return "👤👤👤";
 }
 
 const COLORS = {
@@ -756,3 +755,4 @@ export default function QueuePage() {
     </main>
   );
 }
+
