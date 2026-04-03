@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 /**
  * 行列ウォッチ（/queue）
  * - localStorageのみ
- * - 最新タブ：投稿は3時間で消える（TTL）
+ * - 最新タブ：投稿は12時間で消える（TTL）
  * - 自分タブ：自分が関わった「場所カード」を永久に残す（自分メモは永久）
  * - 検索（場所 / ひとこと）
  * - 👥で混雑
@@ -38,7 +38,7 @@ type MyMemo = {
 
 const STORAGE_KEY = "queuewatch.cards.v2"; // TTL側
 const STORAGE_KEY_ME = "queuewatch.me.v1"; // 永久側
-const TTL_MS = 3 * 60 * 60 * 1000;
+const TTL_MS = 12 * 60 * 60 * 1000;
 
 function now() {
   return Date.now();
@@ -332,7 +332,7 @@ function CardInlineForm(props: {
                 ? `${preset}：${text}`
                 : preset;
 
-            // 表（最新）には必ず出す（3時間で消える）
+            // 表（最新）には必ず出す（12時間で消える）
             props.onPostTTL(finalNote, crowd);
 
             // 裏（自分）は「自分メモ」だけ永久保存
@@ -564,7 +564,7 @@ export default function QueuePage() {
           <div style={{ flex: 1 }} />
 
           <div style={{ fontSize: 12, color: COLORS.sub }}>
-            {tab === "latest" ? "投稿は3時間で消えます" : "自分が関わった場所カードは残ります"}
+            {tab === "latest" ? "投稿は12時間で消えます" : "自分が関わった場所カードは残ります"}
           </div>
         </div>
 
@@ -583,7 +583,7 @@ export default function QueuePage() {
               <input
                 value={placeText}
                 onChange={(e) => setPlaceText(e.target.value)}
-                placeholder="場所（例：渋谷 / shibuya / 東北沢 千里眼）"
+                placeholder="場所（例：渋谷 / shibuya / 東北沢 ramen）"
                 style={inputStyle()}
               />
 
