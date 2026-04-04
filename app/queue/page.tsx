@@ -36,6 +36,11 @@ type MyMemo = {
   createdAt: number;
 };
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 const STORAGE_KEY = "queuewatch.cards.v2"; // TTL側
 const STORAGE_KEY_ME = "queuewatch.me.v1"; // 永久側
 const TTL_MS = 12 * 60 * 60 * 1000;
@@ -332,10 +337,8 @@ function CardInlineForm(props: {
                 ? `${preset}：${text}`
                 : preset;
 
-            // 表（最新）には必ず出す（12時間で消える）
             props.onPostTTL(finalNote, crowd);
 
-            // 裏（自分）は「自分メモ」だけ永久保存
             if (preset === "自分メモ") {
               props.onSaveMe(finalNote, crowd);
             }
@@ -386,20 +389,14 @@ function matchesQueryMe(placeText: string, memos: MyMemo[], qNorm: string) {
 
 export default function QueuePage() {
   const [tab, setTab] = useState<"latest" | "me">("latest");
-
-  // 上部フォーム（最新タブ用）
   const [placeText, setPlaceText] = useState("");
   const [note, setNote] = useState("");
   const [crowd, setCrowd] = useState<Crowd>("2");
-
-  // 検索
   const [query, setQuery] = useState("");
-
-  // TTLカード
   const [cards, setCards] = useState<PlaceCard[]>([]);
-
-  // 自分メモ
   const [myMemos, setMyMemos] = useState<MyMemo[]>([]);
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
     setCards(loadCards());
@@ -428,6 +425,25 @@ export default function QueuePage() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const onBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    const onAppInstalled = () => {
+      setInstallPrompt(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
   const sortedCards = useMemo(() => {
     return [...cards].sort(
       (a, b) =>
@@ -439,6 +455,17 @@ export default function QueuePage() {
     const qNorm = normalizeBase(query);
     return sortedCards.filter((c) => matchesQueryTTL(c, qNorm));
   }, [sortedCards, query]);
+
+  async function handleInstallClick() {
+    if (!installPrompt) return;
+
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+
+    if (choice.outcome === "accepted") {
+      setInstallPrompt(null);
+    }
+  }
 
   function addPostTTL(targetPlaceText: string, targetNote: string, targetCrowd: Crowd) {
     const text = (targetPlaceText ?? "").trim();
@@ -507,7 +534,6 @@ export default function QueuePage() {
     setMyMemos(loadMyMemos());
   }
 
-  /** 自分タブ用：場所ごとにまとめる（場所カードを“永遠”に残す） */
   const meGrouped = useMemo(() => {
     const map = new Map<string, { placeText: string; memos: MyMemo[]; latestAt: number }>();
 
@@ -523,7 +549,6 @@ export default function QueuePage() {
       } else {
         prev.memos.push(m);
         if ((m.createdAt || 0) > (prev.latestAt || 0)) prev.latestAt = m.createdAt || 0;
-        // placeTextは最新の表記を優先
         if (m.placeText) prev.placeText = m.placeText;
       }
     }
@@ -547,12 +572,43 @@ export default function QueuePage() {
   return (
     <main style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 18 }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 10,
+          }}
+        >
           <div style={{ fontWeight: 900, fontSize: 22 }}>行列ウォッチ</div>
+
+          {installPrompt ? (
+            <button
+              type="button"
+              onClick={handleInstallClick}
+              style={{
+                height: 36,
+                padding: "0 12px",
+                borderRadius: 999,
+                border: `1px solid ${COLORS.border}`,
+                background: "white",
+                color: COLORS.text,
+                fontWeight: 900,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                flexShrink: 0,
+              }}
+              title="行列ウォッチをインストール"
+            >
+              <span>📲</span>
+              <span>ダウンロード</span>
+            </button>
+          ) : null}
         </div>
 
-        {/* Tabs */}
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
           <button type="button" onClick={() => setTab("latest")} style={pillStyle(tab === "latest")}>
             最新
@@ -568,7 +624,6 @@ export default function QueuePage() {
           </div>
         </div>
 
-        {/* Top Form（最新タブのみ） */}
         {tab === "latest" ? (
           <div
             style={{
@@ -623,7 +678,6 @@ export default function QueuePage() {
           </div>
         ) : null}
 
-        {/* Cards */}
         <div
           style={{
             background: COLORS.card,
@@ -643,10 +697,9 @@ export default function QueuePage() {
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontWeight: 900 }}>{tab === "latest" ? "カード一覧" : "自分のカード"}</div>
-              <div style={{ fontSize: 12, color: COLORS.sub }}>{tab === "latest" ? "最新順" : "最新順"}</div>
+              <div style={{ fontSize: 12, color: COLORS.sub }}>最新順</div>
             </div>
 
-            {/* Search */}
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <input
                 value={query}
@@ -768,7 +821,6 @@ export default function QueuePage() {
                 ))
               )
             ) : (
-              // 自分タブ
               meFiltered.length === 0 ? (
                 <div style={{ color: COLORS.sub, fontSize: 13, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 14 }}>
                   {query.trim() ? "検索に一致するメモがありません。" : "自分メモはまだありません。"}
@@ -783,7 +835,6 @@ export default function QueuePage() {
 
                     <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
 
-                    {/* 自分メモ（永久） */}
                     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
                       {x.memos.slice(0, 20).map((m) => (
                         <div
@@ -828,7 +879,6 @@ export default function QueuePage() {
                       ))}
                     </div>
 
-                    {/* 自分タブでも同じ場所に追記できる（自分メモを永久保存） */}
                     <div style={{ borderTop: `1px solid ${COLORS.border}` }} />
                     <CardInlineForm
                       placeText={x.placeText}
