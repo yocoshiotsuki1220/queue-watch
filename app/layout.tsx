@@ -34,14 +34,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
     <html lang="ja">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        {/* 🔥 これがPWA起動スイッチ */}
+        <SwRegister />
+
         {children}
       </body>
     </html>
